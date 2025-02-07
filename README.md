@@ -43,7 +43,7 @@ If you want to use **Readme Generator** as a pip-installable module—for instan
 ## Clone or Download the Repository
 
 ```bash
-git clone https://github.com/YourUsername/readme-generator.git
+git clone https://github.com/ArchZion/readme-generator.git
 cd readme-generator
 ```
 
