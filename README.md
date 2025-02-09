@@ -1,4 +1,4 @@
-# Python OpenAPI - Readme Generator
+# Python OpenAI - Readme Generator
 
 **Readme Generator** is a Python command-line tool that automatically analyzes your codebase, merges existing documentation, and updates a `README.md` by combining:
 
