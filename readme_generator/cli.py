@@ -85,6 +85,8 @@ DEFAULT_IGNORE_PATTERNS = [
               help="Ignore file extensions (e.g. '.png', '.exe'). Can be repeated.")
 @click.option("--digest-file", default="readme.md5s",
               help="Where to store/load MD5 digests. Default: readme.md5s")
+@click.option("--visualize", multiple=True, type=click.Choice(["terraform", "nginx", "none"]),
+              help="Generate a visual diagram for certain tech (Terraform, NGINX). Can be repeated.")
 def main(directory,
          output_file,
          existing_readme_file,
@@ -96,7 +98,8 @@ def main(directory,
          force,
          ignore,
          ignore_ext,
-         digest_file):
+         digest_file,
+         visualize):
     """
     Analyzes the code in the specified directory (multi-step),
     merges with an existing README (if any), and uses a custom template file
@@ -109,28 +112,44 @@ def main(directory,
       regeneration if nothing changes.
     - Collects lines with !important.
     - Generates tool installation instructions.
-    - If an existing README is found, merges it into the final doc.
-    - Also loads a user-provided template for extra sections or instructions.
+    - Merges an existing README if found.
+    - Loads a user-provided template for extra sections or instructions.
+    - (NEW) If --visualize includes 'terraform' or 'nginx', attempts to produce
+      a network or architecture diagram in the final README.
+    - (NEW) Reads any readme-generator.ignore file to add more ignore patterns.
     """
     openai.api_key = os.getenv("OPENAI_API_KEY")
     if not openai.api_key:
         click.echo("Error: The environment variable OPENAI_API_KEY is not set.")
         return
 
-    # Combine default patterns + user-specified ignores
+    # 1) Combine default patterns + user-specified ignores
     ignore_patterns = list(DEFAULT_IGNORE_PATTERNS)
+
+    # 2) read from "readme-generator.ignore" if it exists
+    ignore_file = Path("readme-generator.ignore")
+    if ignore_file.exists():
+        try:
+            lines = ignore_file.read_text(encoding="utf-8").splitlines()
+            # Filter out blank lines or comments if desired
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    ignore_patterns.append(line)
+        except Exception as e:
+            click.echo(f"Warning: Could not read readme-generator.ignore: {e}")
+
+    # 3) Add patterns from the CLI
     if ignore:
         ignore_patterns.extend(ignore)
 
-    # 1) Load old digests from separate file
+    # 4) Proceed with building digest and analyzing
     old_repo_digest, old_dir_digests, old_file_digests = load_digests(digest_file)
-
-    # 2) Compute new digests
     new_file_digests = compute_file_digests(directory, ignore_patterns, ignore_ext)
     new_dir_digests = compute_directory_digests(new_file_digests)
     new_repo_digest = compute_repo_digest_from_file_digests(new_file_digests)
 
-    # If no changes in entire repo => skip
+    # If no changes and not forced, skip
     if (not force) and (old_repo_digest == new_repo_digest) and (old_repo_digest is not None):
         click.echo("No code changes detected (repo digest matches). Skipping README generation.")
         return
@@ -138,7 +157,7 @@ def main(directory,
     # read optional repo.intro
     repo_intro = read_repo_intro(directory)
 
-    # detect Tools from file extensions (ignoring certain dirs if needed)
+    # detect Tools
     detected_tools = detect_tools(directory, ignore_patterns, ignore_ext)
 
     # gather directories -> file paths
@@ -158,7 +177,6 @@ def main(directory,
             old_digest = old_file_digests.get(str(fpath), None)
             new_digest = new_file_digests.get(str(fpath), None)
 
-            # skip if unchanged
             if not force and old_digest == new_digest and old_digest is not None:
                 click.echo(f" - No changes in {fpath}, skipping file summary.")
                 summary = "(Unchanged since last analysis)"
@@ -194,11 +212,10 @@ def main(directory,
     else:
         dir_summaries = {}
 
-    # 3) If there's an existing README, or a separate user-provided file
+    # 5) If there's an existing README, or a separate user-provided file
     #    for "existing_readme_file", load it so we can merge content
     if not existing_readme_file:
-        # If not explicitly provided, default to the same as output_file
-        existing_readme_file = output_file
+        existing_readme_file = output_file  # default
 
     existing_readme_content = ""
     existing_readme_path = Path(existing_readme_file)
@@ -208,7 +225,7 @@ def main(directory,
         except Exception:
             existing_readme_content = ""
 
-    # 4) Load template file (if it exists)
+    # 6) Load template file (if it exists)
     template_content = ""
     template_path = Path(template_file)
     if template_path.exists():
@@ -217,6 +234,10 @@ def main(directory,
         except Exception:
             template_content = ""
 
+    # 7) (New) Generate any requested visual diagrams
+    #    For example, if user did --visualize terraform --visualize nginx
+    visuals_content = generate_visuals(visualize, temperature)
+
     # Summarize final repo + merge with existing README + template
     click.echo("\nGenerating final repo summary ...")
     final_repo_readme = generate_final_readme(
@@ -224,12 +245,13 @@ def main(directory,
         tools=detected_tools,
         directory_summaries=dir_summaries,
         annotated_lines_map=annotated_lines_map,
-        file_summaries=directory_file_summaries if not dir_summary else None,
+        file_summaries=directory_file_summaries if dir_summary else None,
         max_tokens=max_tokens,
         temperature=temperature,
         repo_digest=new_repo_digest,
         existing_readme=existing_readme_content,
-        template_content=template_content
+        template_content=template_content,
+        visuals_content=visuals_content  # pass in the newly generated visuals
     )
 
     # Write or append README
@@ -244,8 +266,60 @@ def main(directory,
 
     click.echo(f"\nREADME has been {'appended' if append else 'updated'} at: {output_file}")
 
-    # 5) Save new digests to `digest_file`
+    # 8) Save new digests
     save_digests(digest_file, new_repo_digest, new_dir_digests, new_file_digests)
+
+
+###############################################################################
+# Additional function: generate_visuals()
+###############################################################################
+def generate_visuals(visualize_tuple, temperature=0.3):
+    """
+    Takes a tuple/list from --visualize (which might have 'terraform', 'nginx', etc.)
+    and tries to produce a short ASCII/Markdown/mermaid diagram describing the project.
+
+    E.g.:
+      If 'terraform' in visualize_tuple => generate a Terraform infrastructure diagram
+      If 'nginx' in visualize_tuple => generate an NGINX topology snippet
+    """
+    if not visualize_tuple:
+        return ""
+
+    # Turn it into a set to avoid duplicates
+    visualize_set = set(visualize_tuple)
+    diagram_sections = []
+
+    # For example, if user typed: --visualize terraform
+    if "terraform" in visualize_set:
+        # Here you might do a GPT call to produce a diagram, or just a placeholder
+        diag = call_openai_chat(
+            system_prompt="You are an assistant that produces textual diagrams for Terraform projects.",
+            user_prompt=(
+                "Please generate a simple ASCII or mermaid-based diagram that illustrates a basic Terraform infrastructure. "
+                "Focus on showing how resources (like VPC, subnets, compute instances) connect. Keep it short.\n"
+            ),
+            max_tokens=500,
+            temperature=temperature
+        )
+        diagram_sections.append("## Terraform Visualization\n" + diag)
+
+    if "nginx" in visualize_set:
+        diag = call_openai_chat(
+            system_prompt="You are an assistant that produces textual diagrams for NGINX load balancing or reverse proxy setups.",
+            user_prompt=(
+                "Generate a short ASCII or mermaid-based diagram of an NGINX reverse proxy scenario, "
+                "showing how traffic flows from client to NGINX to upstream services.\n"
+            ),
+            max_tokens=500,
+            temperature=temperature
+        )
+        diagram_sections.append("## NGINX Visualization\n" + diag)
+
+    # If user typed --visualize none or any other combos
+    # you could handle them here if needed
+    # or just do nothing
+
+    return "\n\n".join(diagram_sections)
 
 
 ###############################################################################
@@ -253,16 +327,6 @@ def main(directory,
 ###############################################################################
 
 def load_digests(digest_file):
-    """
-    Load old_repo_digest, old_dir_digests, old_file_digests from a JSON file (digest_file).
-    If the file doesn't exist or is invalid, return (None, {}, {}).
-    Example JSON structure:
-    {
-      "repo_digest": "...",
-      "directory_digests": { "path/to/dir": "...", ... },
-      "file_digests": { "path/to/file": "...", ... }
-    }
-    """
     digest_path = Path(digest_file)
     if not digest_path.exists():
         return None, {}, {}
@@ -278,9 +342,6 @@ def load_digests(digest_file):
         return None, {}, {}
 
 def save_digests(digest_file, repo_digest, directory_digests, file_digests):
-    """
-    Save the new repo_digest, directory_digests, file_digests to a JSON file (digest_file).
-    """
     data = {
         "repo_digest": repo_digest,
         "directory_digests": directory_digests,
@@ -493,10 +554,12 @@ def generate_final_readme(
     temperature=0.3,
     repo_digest=None,
     existing_readme="",
-    template_content=""
+    template_content="",
+    visuals_content=""
 ):
     """
-    Merge existing README content, new analysis, and a custom template file (if provided).
+    Merge existing README content, new analysis, a custom template file, and any
+    generated visuals.
     """
     # Summarize directories
     dir_summary_list = []
@@ -518,60 +581,56 @@ def generate_final_readme(
     # Tools instructions
     tools_block = build_tools_install_instructions(sorted(tools), temperature=temperature)
 
-    # The final prompt merges the existing README with the new analysis, plus a custom template
+    # Merge everything
     user_prompt = f"""
-    We have a user-provided template (or custom instructions):
-    {template_content}
+We have a user-provided template (or custom instructions):
+{template_content}
 
-    We have an existing README with the following content:
-    {existing_readme}
+We have an existing README with the following content:
+{existing_readme}
 
-    Below is new analysis of the code base:
+Below is new analysis of the code base:
 
-    User Intro:
-    {repo_intro}
+User Intro:
+{repo_intro}
 
-    Tools found + install instructions:
-    {tools_block}
+Tools found + install instructions:
+{tools_block}
 
-    Directory Summaries:
-    {combined_dir_summaries}
+Directory Summaries:
+{combined_dir_summaries}
 
-    File Summaries (if directory summaries disabled):
-    {all_file_summaries}
+File Summaries (if directory summaries disabled):
+{all_file_summaries}
 
-    Custom-Annotated Lines Summary:
-    {annotated_summary}
+Custom-Annotated Lines Summary:
+{annotated_summary}
 
-    Code Digest: {repo_digest or ''}
+Visual Diagrams (if any):
+{visuals_content}
 
-    **Your Task**:
-    - **Preserve** unique sections from the existing README.
-    - **Incorporate** the user-provided template headings.
-    - **Add** the new analysis (intro, tools, directory/file summaries, annotated code) into the final structure.
+Code Digest: {repo_digest or ''}
 
-    Preserve any unique sections from the original README and blend them with the
-    updated logic, tools, structure, and template. The final README should incorporate
-    the template's headings and instructions, plus the new analysis.
+**Your Task**:
+- **Preserve** unique sections from the existing README.
+- **Incorporate** the user-provided template headings.
+- **Add** the new analysis (intro, tools, directory/file summaries, annotated code) into the final structure.
+- Insert the generated visuals in a logical place if provided.
 
-    **Important**: Produce **valid Markdown** **without** enclosing the entire output in triple backticks.
-    Keep it under {max_tokens} tokens if possible, and be concise yet informative.
-    """
+Preserve any unique sections from the original README and blend them with the
+updated logic, tools, structure, and template. The final README should incorporate
+the template's headings and instructions, plus the new analysis.
+
+**Important**: Produce **valid Markdown** **without** enclosing the entire output in triple backticks.
+Keep it under {max_tokens} tokens if possible, and be concise yet informative.
+"""
 
     final_readme = call_openai_chat(
-        system_prompt="You are a helpful assistant that merges existing content, a template, and new analysis.",
+        system_prompt="You are a helpful assistant that merges existing content, a template, and new analysis (including potential visuals).",
         user_prompt=user_prompt,
         max_tokens=max_tokens,
         temperature=temperature
     )
-
-    # if final_readme.startswith("```"):
-    #     # Strip off leading triple-backtick lines
-    #     final_readme = re.sub(r"^```[a-zA-Z0-9]*\n?", "", final_readme)
-    # if final_readme.endswith("```"):
-    #     # Strip off trailing triple-backtick
-    #     final_readme = re.sub(r"```$", "", final_readme)
-
     return final_readme
 
 
@@ -623,7 +682,6 @@ def build_tools_install_instructions(tools_list, temperature=0.3):
 
         guide = TOOL_INSTALL_GUIDES.get(tool)
         if guide:
-            # We have a predefined entry
             win = guide.get("Windows", "N/A")
             mac = guide.get("Mac", "N/A")
             ubuntu = guide.get("Ubuntu", "N/A")
@@ -632,7 +690,6 @@ def build_tools_install_instructions(tools_list, temperature=0.3):
             lines.append(f"**Mac**: {mac}")
             lines.append(f"**Ubuntu**: {ubuntu}\n")
         else:
-            # Unknown tool => generate instructions on the fly
             instructions = generate_install_guide_for(tool, temperature=temperature)
             lines.append(instructions)
             lines.append("")  # blank line
@@ -641,10 +698,6 @@ def build_tools_install_instructions(tools_list, temperature=0.3):
 
 
 def generate_install_guide_for(tool_name, temperature=0.3):
-    """
-    Use GPT to produce short installation instructions for 'tool_name'
-    on Windows, Mac, and Ubuntu. We'll do a single call.
-    """
     system_prompt = (
         "You are a helpful assistant that provides brief, step-by-step installation instructions "
         "for different tools on Windows, Mac, and Ubuntu."
@@ -701,7 +754,6 @@ def chunk_text(text, max_chunk_size=1200):
         chunk_len = max_chunk_size * 2
         return [text[i : i+chunk_len] for i in range(0, len(text), chunk_len)]
 
-    # We just pick a known encoding, ignoring MODEL_NAME
     enc = tiktoken.get_encoding("cl100k_base")
     tokens = enc.encode(text)
 
