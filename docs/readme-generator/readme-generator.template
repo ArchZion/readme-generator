@@ -1,0 +1,42 @@
+# Quality README Generation Template
+
+## Required Structure
+Create a README with these sections in order:
+
+1. **Project Title** with badges (build status, version, license)
+2. **Brief Description** - One clear sentence explaining what it does
+3. **Features** - Key capabilities and benefits
+4. **Installation** - Multiple installation methods with system requirements
+5. **Quick Start** - Basic usage example
+6. **Usage** - Detailed usage with examples
+7. **Configuration** - Settings and options
+8. **Architecture** - Diagrams and flows for the application or infrastructure
+8. **API Reference** - If applicable, document public functions/endpoints
+9. **Examples** - Practical code examples
+
+## Content Guidelines
+- Write in present tense, active voice
+- Be concise but comprehensive
+- Include practical, copy-paste ready examples
+- Use proper Markdown syntax with language-specified code blocks
+- Add troubleshooting tips for common issues
+- Include version requirements for dependencies
+- Show both simple and advanced usage patterns
+
+## Special Focus Areas
+- **CLI Tools**: Emphasize command-line usage and options
+- **Libraries**: Focus on API documentation and import examples
+- **Web Apps**: Include deployment and configuration instructions
+- **Data Projects**: Explain methodology and data requirements
+- **DevOps Tools**: Show integration examples and automation
+
+## Quality Standards
+- All code examples must be syntactically correct
+- Include error handling patterns
+- Provide realistic, tested examples
+- Use consistent formatting throughout
+- Add relevant badges and links
+
+## Architecture
+- Add Architecture diagrams if possible
+- Add flow charts as well if possible.

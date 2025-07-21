@@ -1,0 +1,24 @@
+# Readme Generator Ignore File
+# Add your custom ignore patterns here, one per line
+# Lines starting with # are comments and will be ignored
+#
+# Examples:
+# my-custom-folder/
+# *.custom
+# specific-file.txt
+#
+# The tool will automatically combine these with the default exclusions
+
+# Add your custom ignore patterns below this line:
+
+# Example: Ignore specific project folders
+# tests/
+# docs/api/
+
+# Example: Ignore specific file types
+# *.test.js
+# *.spec.py
+
+# Example: Ignore specific files
+# config.local.json
+# secrets.env
