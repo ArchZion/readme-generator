@@ -151,7 +151,6 @@ DEFAULT_IGNORE_PATTERNS = [
 
     # Documentation and config files that don't need summarization
     ".dockerignore", ".gitignore", ".gitattributes", ".editorconfig",
-    "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
     "Makefile", "CMakeLists.txt", "*.cmake",
 
     # Configuration files
@@ -196,7 +195,7 @@ DEFAULT_IGNORE_EXTENSIONS = [
     ".pyc", ".pyo", ".pyd", ".class", ".jar", ".war",
 
     # Data files
-    ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
+    ".csv", ".tsv", ".json", ".xml",
 
     # Logs and temporary
     ".log", ".tmp", ".temp", ".cache",
@@ -661,7 +660,7 @@ def summarize_file_and_collect_annotations(client, file_path, temperature=0.3):
                 client,
                 system_prompt="Summarize this code content.",
                 user_prompt=f"Code:\n{chunk}\n\nSummary:",
-                max_tokens=2000,
+                max_tokens=15000,
                 temperature=temperature
             )
             chunk_summaries.append(f"Chunk {idx+1} summary: {snippet_summary}")
@@ -680,7 +679,7 @@ def summarize_file_and_collect_annotations(client, file_path, temperature=0.3):
             client,
             system_prompt="Combine these summaries into one.",
             user_prompt=f"Summaries:\n{combined_text}\n\nCombined summary:",
-            max_tokens=4000,
+            max_tokens=25000,
             temperature=temperature
         )
     except Exception as e:
@@ -734,7 +733,7 @@ def generate_final_readme(
     directory_summaries,
     annotated_lines_map,
     file_summaries=None,
-    max_tokens=8000,
+    max_tokens=30000,
     temperature=0.3,
     repo_digest=None,
     existing_readme="",
@@ -851,7 +850,7 @@ def summarize_annotated_lines(client, annotated_lines_map, temperature=0.3):
             "Please provide a technical summary of what these annotations indicate:\n\n"
             f"{combined_text}"
         ),
-        max_tokens=800,
+        max_tokens=2500,
         temperature=temperature
     )
     return annotated_summary
@@ -921,7 +920,7 @@ def generate_install_guide_for(client, tool_name, temperature=0.3):
 # Gemini call with usage logging and robust error handling
 ###############################################################################
 
-def call_gemini_chat(client, system_prompt, user_prompt, max_tokens=500, temperature=0.3):
+def call_gemini_chat(client, system_prompt, user_prompt, max_tokens=10000, temperature=0.3):
     """
     Call Gemini API with robust error handling and token limit compliance.
     Uses the new client format from the Gemini API documentation.
